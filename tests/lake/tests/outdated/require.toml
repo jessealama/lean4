@@ -1,0 +1,6 @@
+name = "test"
+
+[[require]]
+name = "Cli"
+scope = "leanprover"
+rev = "main"

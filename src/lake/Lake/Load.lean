@@ -12,6 +12,7 @@ public import Lake.Load.Lean.Elab
 public import Lake.Load.Lean.Eval
 public import Lake.Load.Manifest
 public import Lake.Load.Materialize
+public import Lake.Load.Outdated
 public import Lake.Load.Package
 public import Lake.Load.Resolve
 public import Lake.Load.Toml

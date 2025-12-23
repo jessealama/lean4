@@ -33,6 +33,7 @@ COMMANDS:
   env <cmd> <args>...   execute a command in Lake's environment
   lean <file>           elaborate a Lean file in Lake's context
   update                update dependencies and save them to the manifest
+  outdated              check for outdated dependencies
   pack                  pack build artifacts into an archive for distribution
   unpack                unpack build artifacts from an distributed archive
   upload <tag>          upload build artifacts to a GitHub release
@@ -211,6 +212,29 @@ removed from the configuration). If there are dependencies on multiple versions
 of the same package, the version materialized is undefined.
 
 A bare `lake update` will upgrade all dependencies."
+
+def helpOutdated :=
+"Check for outdated dependencies
+
+USAGE:
+  lake outdated [<package>...]
+
+OPTIONS:
+  --json, -J            output JSON-formatted results
+
+Shows which dependencies could be updated without actually updating them.
+For each dependency, displays:
+  - Current installed version/revision
+  - Latest available version/revision
+  - Version constraint from lakefile (if any)
+
+For Reservoir packages, queries the registry for available versions.
+For git dependencies with branch refs, checks for newer commits.
+Path dependencies are always reported as up to date.
+
+If specific packages are specified, only those are checked.
+
+A bare `lake outdated` will check all dependencies."
 
 def helpTest :=
 "Test the workspace's root package using its configured test driver
@@ -548,6 +572,7 @@ public def help : (cmd : String) → String
 | "check-build"         => helpCheckBuild
 | "query"               => helpQuery
 | "update" | "upgrade"  => helpUpdate
+| "outdated"            => helpOutdated
 | "pack"                => helpPack
 | "unpack"              => helpUnpack
 | "upload"              => helpUpload

@@ -18,6 +18,7 @@ import Lake.Build.Job.Register
 import Lake.Build.Target.Fetch
 import Lake.Load.Package
 import Lake.Load.Workspace
+import Lake.Load.Outdated
 import Lake.Util.IO
 import Lake.Util.Git
 import Lake.Util.Error
@@ -668,6 +669,31 @@ protected def update : CliM PUnit := do
   let toUpdate := (← getArgs).foldl (·.insert <| stringToLegalOrSimpleName ·) {}
   updateManifest config toUpdate
 
+protected def outdated : CliM PUnit := do
+  processOptions lakeOption
+  let opts ← getThe LakeOptions
+  let config ← mkLoadConfig opts
+  let filter := (← getArgs).foldl (·.insert <| stringToLegalOrSimpleName ·) {}
+  -- Check if manifest exists before loading workspace (to avoid auto-creation)
+  let manifestFile := config.pkgDir / defaultManifestFile
+  unless (← manifestFile.pathExists) do
+    logError "no manifest found; run `lake update` first to create one"
+    exit 1
+  let ws ← loadWorkspace config
+  let manifest ← match (← Manifest.load? ws.manifestFile) with
+    | some m => pure m
+    | none =>
+      logError "failed to load manifest"
+      return
+  let results ← checkAllOutdated ws.lakeEnv ws.root.dir manifest ws.root.depConfigs filter
+  if results.isEmpty then
+    match opts.outFormat with
+    | .json => IO.println "[]"
+    | .text => IO.println "No dependencies to check."
+  else
+    for info in results do
+      IO.println <| formatQuery opts.outFormat info
+
 protected def pack : CliM PUnit := do
   processOptions lakeOption
   let file? ← takeArg?
@@ -899,6 +925,7 @@ def lakeCli : (cmd : String) → CliM PUnit
 | "query"               => lake.query
 | "query-kind"          => lake.queryKind
 | "update" | "upgrade"  => lake.update
+| "outdated"            => lake.outdated
 | "resolve-deps"        => lake.resolveDeps
 | "pack"                => lake.pack
 | "unpack"              => lake.unpack
