@@ -29,7 +29,15 @@ def Monitor.spinnerFrames :=
 /-- Context of the Lake build monitor. -/
 structure MonitorContext where
   jobs : JobQueue
+  /-- Where progress, job captions, and the build summary are written. -/
   out : IO.FS.Stream
+  /--
+  Where log entries are written. Equal to `out` in text mode; under
+  `--json` it is stdout while `out` is stderr, so that a consumer can read
+  the JSON stream without filtering progress out of it.
+  -/
+  logOut : IO.FS.Stream
+  outFormat : OutFormat
   outLv : LogLevel
   failLv : LogLevel
   minAction : JobAction
@@ -111,7 +119,7 @@ def renderProgress
 
 def reportJob (job : OpaqueJob) : MonitorM PUnit := do
   let {jobNo, totalJobs, ..} ← get
-  let {failLv, outLv, showOptional, out, useAnsi, showProgress, minAction, showTime, ..} ← read
+  let {failLv, outLv, showOptional, out, logOut, outFormat, useAnsi, showProgress, minAction, showTime, ..} ← read
   let {task, caption, optional, ..} := job
   let {log, action, wantsRebuild, buildTime, ..} := task.get.state
   let maxLv := log.maxLv
@@ -129,19 +137,24 @@ def reportJob (job : OpaqueJob) : MonitorM PUnit := do
     let icon := if hasOutput then maxLv.icon else '✔'
     let opt := if optional then " (Optional)" else ""
     let time := if showTime && buildTime > 0 then s!" ({formatTime buildTime})" else ""
-    let caption := s!"{icon} [{jobNo}/{totalJobs}]{opt} {verb} {caption}{time}"
-    let caption :=
+    let line := s!"{icon} [{jobNo}/{totalJobs}]{opt} {verb} {caption}{time}"
+    let line :=
       if useAnsi then
         let color := if hasOutput then maxLv.ansiColor else "32"
-        Ansi.chalk color caption
+        Ansi.chalk color line
       else
-        caption
+        line
     let resetCtrl ← modifyGet fun s => (s.resetCtrl, {s with resetCtrl := ""})
-    print s!"{resetCtrl}{caption}\n"
+    print s!"{resetCtrl}{line}\n"
     if hasOutput then
       let outLv := if failed then .trace else outLv
-      log.replay (logger := .stream out outLv useAnsi)
+      match outFormat with
+      | .text => log.replay (logger := .stream out outLv useAnsi)
+      | .json => log.replay (logger := .jsonStream logOut (some caption) outLv)
     flush
+    match outFormat with
+    | .text => pure ()
+    | .json => Lake.flush logOut
 where
   formatTime ms :=
     if ms > 10000 then s!"{ms / 1000}s"
@@ -220,7 +233,11 @@ def mkMonitorContext
   (cfg : BuildConfig) (jobs : JobQueue)
   (cancelTk? : Option IO.CancelToken := none)
 : BaseIO MonitorContext := do
-  let out ← cfg.out.get
+  -- Under `--json`, stdout is reserved for the JSON log stream, so everything
+  -- human-facing moves to stderr regardless of `cfg.out`.
+  let (out, logOut) ← match cfg.outFormat with
+    | .text => do let out ← cfg.out.get; pure (out, out)
+    | .json => do pure (← IO.getStderr, ← IO.getStdout)
   let useAnsi ← cfg.ansiMode.isEnabled out
   let outLv := cfg.outLv
   let failLv := cfg.failLv
@@ -231,8 +248,9 @@ def mkMonitorContext
   let showTime := isVerbose || !useAnsi
   let updateFrequency := 100
   return {
-    jobs, out, failLv, outLv, minAction, showOptional
+    jobs, out, logOut, failLv, outLv, minAction, showOptional
     useAnsi, showProgress, showTime, updateFrequency, cancelTk?
+    outFormat := cfg.outFormat
     failFast := cfg.failFast
   }
 
@@ -270,6 +288,7 @@ public def monitorJobs
   let ctx := {
     jobs, out, failLv, outLv, minAction, showOptional
     useAnsi, showProgress, showTime, updateFrequency
+    logOut := out, outFormat := .text
   }
   monitorJobs' ctx initJobs initFailures resetCtrl
 

@@ -9,6 +9,7 @@ prelude
 public import Lake.Config.Cache
 public import Lake.Config.Context
 public import Lake.Build.Job.Basic
+public import Lake.Config.OutFormat
 
 open System
 namespace Lake
@@ -27,6 +28,13 @@ public structure BuildConfig extends LogConfig where
   verbosity : Verbosity := .normal
   /-- Whether to print a message when the build finishes successfully (if not quiet). -/
   showSuccess : Bool := false
+  /--
+  How the build's log entries are rendered. With `.json`, `out` is ignored: one
+  JSON object per entry is written to stdout, and progress, job captions, and
+  the build summary go to stderr as text, so the JSON stream can be consumed
+  without filtering.
+  -/
+  outFormat : OutFormat := .text
   /-- File to save input-to-output mappings from the build of the workspace's root -/
   outputsFile? : Option FilePath := none
   /--
