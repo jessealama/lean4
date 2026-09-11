@@ -19,6 +19,7 @@ A Lake configuration file defines the package's basic configuration. It also typ
   + [Test & Lint](#test--lint)
   + [Cloud Releases](#cloud-releases)
 * [Specifying Targets](#specifying-targets)
+* [JSON Build Output](#json-build-output)
 * [Defining Targets](#defining-targets)
   + [Lean Libraries](#lean-libraries)
   + [Binary Executables](#binary-executables)
@@ -305,6 +306,81 @@ input_file foo where
 lean_exe exe where
   needs := #[foo]
 ```
+
+## JSON Build Output
+
+`lake build --json` (or `-J`) writes the build's log entries to stdout as
+newline-delimited JSON — one object per line, per entry — and moves everything
+else to stderr: the progress spinner, the `✔ [12/345] Built Foo` captions, and
+the closing `Build completed successfully (N jobs).` summary. That split means
+`lake build --json | jq` works without filtering, while a human watching the
+same run still sees progress.
+
+An entry produced from a Lean message looks like this (reformatted for
+readability; the real output is one line):
+
+```json
+{
+  "target": "Mathlib.Foo",
+  "level": "warning",
+  "kind": "linter.unusedVariables",
+  "fileName": "Mathlib/Foo.lean",
+  "pos": { "line": 12, "column": 7 },
+  "endPos": { "line": 12, "column": 8 },
+  "data": "Variable name `x` is not explicitly referenced.\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`",
+  "message": "Mathlib/Foo.lean:12:7: Variable name `x` is not explicitly referenced.\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`"
+}
+```
+
+| Field | Always present | Meaning |
+| --- | --- | --- |
+| `target` | yes | The build monitor's caption for the job that produced the entry — the same string that follows the verb in `✔ [12/345] Built Mathlib.Foo`. For module builds this is the module name. It is a display string, not a target you can pass back to `lake build`; some jobs have prose captions such as `prepare lean /path/to/File.lean`. |
+| `level` | yes | `trace`, `info`, `warning`, or `error`. |
+| `message` | yes | The fully rendered text, identical to what `lake build` prints without `--json`. |
+| `kind` | no | The message kind. For a linter warning this is the linter's option name (`linter.unusedVariables`); for a named error it is the error's name with a `._namedError` suffix (`lean.unknownIdentifier._namedError`). Absent when Lean left the message untagged and for entries Lake produced itself. A consumer grouping by linter should filter on the `linter.` prefix rather than treating every `kind` as a linter. |
+| `fileName` | no | Source file, as a `/`-separated path relative to the directory of the package that owns the module, not the workspace root. For a dependency that is `.lake/packages/<dep>/`. The JSON does not say which package that is; a consumer that needs a workspace-relative or absolute path has to resolve it from `target`. |
+| `pos`, `endPos` | no | `{"line", "column"}`, with `line` 1-based and `column` 0-based, as Lean reports them. `endPos` is absent when Lean reported no end position. |
+| `caption` | no | The message caption, when non-empty. Lean's build diagnostics leave it empty in practice, so expect this key to be rare. |
+| `data` | no | The message body alone — trimmed, without the `file:line:col:` prefix that `message` carries and without `caption` prepended. |
+
+Fields that do not apply are **omitted**, not set to `null`, so a consumer
+should use a defaulting lookup rather than assuming a fixed key set. Entries
+Lake creates itself — the `lean` invocation it logs at `trace` level, captured
+subprocess output, I/O errors — carry only `target`, `level`, and `message`.
+
+Which entries appear is exactly the set `lake build` would have printed:
+`--quiet`/`-q`, `--verbose`/`-v`, `--fail-level`, and `--wfail` filter the JSON
+stream the same way they filter the text one. In particular, a job that failed
+has its whole log replayed at `trace` level in both modes, so the `lean`
+command line appears in the JSON stream for failing targets. Filter it out with
+`select(.level != "trace")` if you do not want it.
+
+Lean panics are not structured. A panic raised while evaluating a command such
+as `#eval` is reported by Lean as a positioned `info` message whose `data`
+starts with `PANIC at `; a panic that reaches the compiler's stderr instead is
+relayed by Lake as a single unpositioned `info` entry with no `data`. A consumer
+looking for panics should therefore scan `data` when present and fall back to
+`message`.
+
+Only entries attached to a build job are on the JSON stream. Diagnostics Lake
+reports outside the job monitor stay on stderr as text: warnings while loading
+the workspace, the "no targets specified" warning, the `Some required targets
+logged failures:` list, and `error: build failed`. Use the exit code for the
+overall result, not the absence of `error` entries.
+
+The structured fields come from the build, not from the text. Modules that
+were last built by a Lake older than this format, or restored from a Lake
+cache archive (whose packer keeps only `level` and `message`), replay their
+cached logs with only `target`, `level`, and `message` until they are rebuilt.
+
+Where the field names overlap with the objects `lean --json` prints (`kind`,
+`fileName`, `pos`, `endPos`, `caption`, `data`), they mean the same thing. The
+one deliberate difference is `level` in place of Lean's `severity`: it uses
+Lake's log levels (`info` rather than `information`, and it can be `trace`),
+because the same stream also carries entries Lake produces itself.
+
+Note that `--json` means something different for `lake query`, where it formats
+*target results* rather than log entries.
 
 ## Defining Targets
 

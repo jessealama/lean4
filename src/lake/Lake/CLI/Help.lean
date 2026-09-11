@@ -62,7 +62,8 @@ BASIC OPTIONS:
   --fail-fast           stop scheduling new build jobs after the first required failure
   --no-cache            build packages locally; do not download build caches
   --try-cache           attempt to download build caches for supported packages
-  --json, -J            output JSON-formatted results (in `lake query`)
+  --json, -J            output JSON (target results for `lake query`;
+                        log entries for `lake build`)
   --text                output results as plain text (in `lake query`)
 
 OUTPUT OPTIONS:
@@ -167,7 +168,21 @@ With the Lake cache enabled, the `-o` option will cause Lake to track the
 input-to-outputs mappings of targets in the root package touched during the
 build and write them to the specified file at the end of the build. These
 mappings can then be used to upload build artifacts to a remote cache with
-`lake cache put`."
+`lake cache put`.
+
+JSON OUTPUT:
+
+With `--json`, `lake build` writes one JSON object per log entry to stdout,
+newline-delimited, and moves progress, job captions, and the build summary to
+stderr. So `lake build --json | jq` needs no filtering.
+
+Each object always has `target`, `level`, and `message`. Entries that came from
+a Lean message also carry `kind`, `fileName`, `pos`, `endPos`, and `data`, and
+`caption` when the message had one; fields that do not apply are omitted rather
+than set to null. See the Lake README for the full field reference.
+
+Which entries appear is exactly what `lake build` would print: `-q`, `-v`, and
+`--fail-level` filter the JSON stream the same way they filter the text one."
 
 def helpQuery :=
 "Build targets and output results
