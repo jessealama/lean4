@@ -63,3 +63,21 @@ echo "# TEST: Lake's own entries gain no fields"
 # level (a Lake-created entry) and the warning. Exactly one `"kind"` in the
 # file proves the `?`-suffix omission on the Lake-created one.
 test_cmd_eq 1 sh -c 'grep -c "\"kind\"" '"$TRACE"
+
+echo "# TEST: Traces written before structured entries still parse"
+
+if command -v jq > /dev/null; then # skip if no jq found
+  ./clean.sh
+  test_out "not explicitly referenced" build
+  # Rewrite the fresh trace into the pre-change format: only `level` and
+  # `message` on each log entry. `schemaVersion`, `depHash`, `inputs`, and
+  # `outputs` stay as produced, so the trace is genuinely up to date and the
+  # replay path actually runs.
+  jq '.log |= map({level, message})' $TRACE > old.trace
+  test_cmd cat old.trace
+  cp old.trace $TRACE
+  test_run build --no-build
+  test_not_out "unknown trace format" build --no-build
+  test_not_out "invalid trace" build --no-build
+  test_out "not explicitly referenced" build
+fi
