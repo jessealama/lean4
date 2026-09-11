@@ -127,14 +127,49 @@ public def Verbosity.minLogLv : Verbosity → LogLevel
 | .normal =>  .info
 | .verbose => .trace
 
+/--
+A Lake log entry.
+
+`level` and `message` are always present; `message` is the fully rendered text
+that `lake build` prints. The remaining fields carry the structure of the
+`Lean.SerialMessage` an entry was built from, and are all `none` for entries
+Lake produces itself (trace lines, captured subprocess output, I/O errors).
+
+The `?` suffixes are load-bearing: the derived `ToJson`/`FromJson` instances key
+their optional-field handling off the field *name*, so these serialize under
+`"kind"`, `"pos"`, etc., and are omitted entirely when absent.
+-/
 public structure LogEntry where
   level : LogLevel
   message : String
+  /--
+  The message kind — for linter warnings, the linter's option name (e.g.
+  `linter.unusedVariables`); for named errors, `<name>._namedError`. `none` when
+  Lean left the message untagged, and for entries Lake produced itself.
+  -/
+  kind? : Option Name := none
+  /--
+  The source file the message was reported against, as a `/`-separated path
+  relative to the directory of the package that owns the module (for a
+  dependency, `.lake/packages/<dep>/`), not the workspace root. Lake rewrites
+  the path Lean reports; see `Lake.compileLeanModule`.
+  -/
+  fileName? : Option String := none
+  pos? : Option Position := none
+  endPos? : Option Position := none
+  /-- The message caption, when Lean supplied a non-empty one. -/
+  caption? : Option String := none
+  /--
+  The message body: trimmed, without the `file:line:col:` prefix that `message`
+  carries, and without `caption?` prepended. So `message` is exactly this value
+  (or `"{caption?}:\n{data?}"`) with position information glued on.
+  -/
+  data? : Option String := none
   deriving Inhabited, ToJson, FromJson
 
 public protected def LogEntry.toString (self : LogEntry) (useAnsi := false) : String :=
   if useAnsi then
-    let {level := lv, message := msg} := self
+    let {level := lv, message := msg, ..} := self
     let pre := Ansi.chalk lv.ansiColor s!"{lv.toString}:"
     s!"{pre} {msg}"
   else
@@ -155,11 +190,19 @@ public instance : ToString LogEntry := ⟨LogEntry.toString⟩
   {level := .error, message}
 
 public def LogEntry.ofSerialMessage (msg : SerialMessage) : LogEntry :=
-  let str := if msg.caption.trimAscii.isEmpty then
-     msg.data.trimAscii.copy else s!"{msg.caption.trimAscii}:\n{msg.data.trimAscii}"
+  let caption := msg.caption.trimAscii.copy
+  let data := msg.data.trimAscii.copy
+  let str := if caption.isEmpty then data else s!"{caption}:\n{data}"
   {
     level := .ofMessageSeverity msg.severity
     message := mkErrorStringWithPos msg.fileName msg.pos str none
+    -- `.anonymous` renders as the string "[anonymous]"; only report kinds Lean set.
+    kind? := if msg.kind.isAnonymous then none else some msg.kind
+    fileName? := some msg.fileName
+    pos? := some msg.pos
+    endPos? := msg.endPos
+    caption? := if caption.isEmpty then none else some caption
+    data? := some data
   }
 
 public def LogEntry.ofMessage (msg : Message) : BaseIO LogEntry := do
