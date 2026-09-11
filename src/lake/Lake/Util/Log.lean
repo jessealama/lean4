@@ -11,6 +11,7 @@ public import Lake.Util.Error
 public import Lake.Util.EStateT
 public import Lean.Message
 public import Lake.Util.Lift
+import Lake.Util.JsonObject
 import Init.Data.String.TakeDrop
 import Init.Data.String.Modify
 
@@ -177,6 +178,35 @@ public protected def LogEntry.toString (self : LogEntry) (useAnsi := false) : St
 
 public instance : ToString LogEntry := ⟨LogEntry.toString⟩
 
+/--
+Renders a log entry as a single JSON object for `lake build --json`.
+
+`target`, `level`, and `message` are always present, so a consumer can rely on
+them; the structured fields appear only when the entry carries them. This is
+deliberately a hand-written rendering rather than the derived `ToJson`: it is a
+public output format that tools parse, and it should not track Lake's internal
+field list.
+-/
+public def LogEntry.toJsonLine (self : LogEntry) (target? : Option String) : String :=
+  Json.compress <| JsonObject.toJson <|
+    ({} : JsonObject)
+    |>.insertSome "target" target?
+    |>.insert "level" self.level.toString
+    |>.insert "message" self.message
+    |>.insertSome "kind" (self.kind?.map toString)
+    |>.insertSome "fileName" self.fileName?
+    |>.insertSome "pos" self.pos?
+    |>.insertSome "endPos" self.endPos?
+    |>.insertSome "caption" self.caption?
+    |>.insertSome "data" self.data?
+
+/-- Like `logToStream`, but renders the entry as JSON. See `LogEntry.toJsonLine`. -/
+public def logToJsonStream
+  (e : LogEntry) (target? : Option String) (out : IO.FS.Stream) (minLv : LogLevel)
+: BaseIO PUnit := do
+  if e.level ≥ minLv then
+    out.putStrLn (e.toJsonLine target?) |>.catchExceptions fun _ => pure ()
+
 @[inline] public def LogEntry.trace (message : String) : LogEntry :=
   {level := .trace, message}
 
@@ -257,6 +287,10 @@ public instance [MonadLift m n] [methods : MonadLog m] : MonadLog n := methods.l
 public abbrev stream [MonadLiftT BaseIO m]
   (out : IO.FS.Stream) (minLv := LogLevel.info) (useAnsi := false)
 : MonadLog m where logEntry e := logToStream e out minLv useAnsi
+
+public abbrev jsonStream [MonadLiftT BaseIO m]
+  (out : IO.FS.Stream) (target? : Option String := none) (minLv := LogLevel.info)
+: MonadLog m where logEntry e := logToJsonStream e target? out minLv
 
 @[inline] public def error [Alternative m] [MonadLog m] (msg : String) : m α :=
   logError msg *> failure
